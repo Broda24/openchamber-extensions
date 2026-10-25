@@ -1,0 +1,42 @@
+{
+  "name": "openchamber-ideenboard",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Persönliches Kanban-Board für Ideen und aktuelle Arbeit in OpenChamber",
+  "scripts": {
+    "build": "esbuild panel/main.ts --bundle --format=iife --platform=browser --target=es2022 --outfile=panel/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild panel/board-model.ts panel/board-storage.ts panel/chat-integration.ts --bundle --platform=node --format=esm --target=es2022 --outdir=.test --out-extension:.js=.mjs && node --test tests/board-model.test.mjs tests/board-storage.test.mjs tests/chat-integration.test.mjs",
+    "test:browser": "npm run build && playwright test",
+    "package": "npm run build && python3 scripts/package.py"
+  },
+  "dependencies": {
+    "@openchamber/sdk": "2.5.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.5.1"
+    },
+    "contributes": {
+      "panel": {
+        "id": "ideenboard",
+        "name": "Ideenboard",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "attach": "panel",
+      "page": true,
+      "capabilities": ["sessions", "prompt"],
+      "actions": [
+        { "id": "collect-idea", "label": "Als Idee sammeln", "where": "message" }
+      ]
+    }
+  }
+}

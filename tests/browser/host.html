@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Isolierter OpenChamber-Sandbox-Test</title>
+<style>body { margin: 0; } iframe { display: block; width: 100%; height: 95vh; border: 0; }</style>
+<iframe title="Ideenboard" sandbox="allow-scripts" src="/panel/index.html"></iframe>
+<script>
+  // Test-only SDK peer. No requests ever reach OpenChamber or create real sessions.
+  let frame = document.querySelector('iframe');
+  const entries = new Map();
+  const values = new Proxy(Object.create(null), {
+    get: (_, key) => entries.get(key),
+    set: (_, key, value) => { entries.set(key, structuredClone(value)); return true; },
+    deleteProperty: (_, key) => entries.delete(key),
+    ownKeys: () => [...entries.keys()],
+    getOwnPropertyDescriptor: (_, key) => entries.has(key)
+      ? { enumerable: true, configurable: true, value: entries.get(key) } : undefined,
+  });
+  let channel;
+  const push = (type, payload) => frame.contentWindow.postMessage({ channel, v: 1, type, payload }, '*');
+  window.testHost = {
+    values, entries, requests: [], writes: 0, deletes: 0, clipboard: '',
+    failReads: false, failWrites: false, failDeletes: false, failClipboard: false,
+    failures: {}, delay: 0, delays: {}, holdWrites: false, heldWrites: [],
+    startSent: 'sent', startFailure: null, sessionCounter: 0,
+    directory: null, currentSession: null, item: null, grants: ['sessions', 'prompt'],
+    projects: [{ id: 'project-one', name: 'Testprojekt', directory: '/fake/project' }],
+    releaseWrites() { this.holdWrites = false; this.heldWrites.splice(0).forEach((release) => release()); },
+    resetStorage() { entries.clear(); },
+    reloadFrame() {
+      const fresh = frame.cloneNode(false);
+      frame.replaceWith(fresh);
+      frame = fresh;
+    },
+    pushSession(session) { this.currentSession = session; push('session', { session }); },
+    pushItem(item) { this.item = item; push('item', { item }); },
+    pushDirectory(directory) { this.directory = directory; push('directory', { directory }); },
+  };
+  const theme = {
+    background: '#18181b', elevated: '#232328', foreground: '#e7e5e4',
+    muted: '#a1a1aa', subtle: '#27272a', border: '#3d3d44', hover: '#303037',
+    selection: '#494054', focus: '#a78bfa', primary: '#8b5cf6', mutedSurface: '#202024',
+    elevatedForeground: '#fafafa', active: '#39353f', selectionForeground: '#fafafa',
+    primaryForeground: '#ffffff', primaryText: '#c4b5fd', successText: '#86efac',
+    warningText: '#fde68a', errorText: '#fca5a5', infoText: '#93c5fd',
+    success: '#4ade80', warning: '#fbbf24', error: '#f87171', info: '#60a5fa',
+    font: 'system-ui, sans-serif', mono: 'monospace', radius: '8px',
+  };
+  const bytes = (value) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  addEventListener('message', async (event) => {
+    if (event.source !== frame.contentWindow || event.data?.v !== 1) return;
+    const message = event.data;
+    channel = message.channel;
+    const send = (value) => event.source.postMessage({ channel: message.channel, v: 1, ...value }, '*');
+    if (message.type === 'hello') {
+      send({ type: 'ready', payload: {
+        theme: { mode: 'dark', tokens: theme }, locale: 'de', directory: testHost.directory,
+        session: testHost.currentSession, surface: 'panel', connection: { connected: false, account: '' },
+        settings: {}, item: testHost.item,
+      } });
+      return;
+    }
+    testHost.requests.push(structuredClone(message));
+    const success = (payload = {}) => send({ type: 'result', id: message.id, ok: true, payload });
+    const failure = (code = 'HOST_REJECTED', error = 'Test: Speicher nicht erreichbar') =>
+      send({ type: 'result', id: message.id, ok: false, code, error });
+    const request = message.payload;
+    const operation = message.type === 'storage' ? `storage:${request.op}` : message.type;
+    const injected = testHost.failures[operation] || testHost.failures[message.type];
+    const failedWrite = testHost.failWrites;
+    const delay = testHost.delays[operation] ?? testHost.delay;
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    if (message.type === 'storage' && request.op === 'set' && testHost.holdWrites)
+      await new Promise((resolve) => testHost.heldWrites.push(resolve));
+    if (injected) return failure(injected, `Test: ${operation} verweigert`);
+    if (message.type === 'storage') {
+      if (request.op === 'get') {
+        if (testHost.failReads) return failure();
+        return success({ storage: true, op: 'get', found: entries.has(request.key),
+          ...(entries.has(request.key) ? { value: structuredClone(entries.get(request.key)) } : {}) });
+      }
+      if (request.op === 'keys') {
+        if (testHost.failReads) return failure();
+        return success({ storage: true, op: 'keys', keys: [...entries.keys()] });
+      }
+      if (request.op === 'set') {
+        if (failedWrite) return failure();
+        if (bytes(request.value) > 64 * 1024) return failure('HOST_REJECTED', 'Test: 64 KiB/value exceeded');
+        const next = new Map(entries).set(request.key, request.value);
+        const total = [...next].reduce((sum, [key, value]) => sum + new TextEncoder().encode(key).byteLength + bytes(value), 0);
+        if (total > 2 * 1024 * 1024) return failure('HOST_REJECTED', 'Test: 2 MiB total exceeded');
+        entries.set(request.key, structuredClone(request.value));
+        testHost.writes++;
+        return success({ storage: true, op: 'set' });
+      }
+      if (request.op === 'delete') {
+        if (testHost.failDeletes) return failure();
+        entries.delete(request.key); testHost.deletes++;
+        return success({ storage: true, op: 'delete' });
+      }
+    }
+    if (message.type === 'workspace-read' && request.kind === 'projects') {
+      if (!testHost.grants.includes('sessions')) return failure('NOT_GRANTED', 'Sitzungsberechtigung fehlt');
+      return success({ kind: 'projects', state: 'ready', projects: testHost.projects });
+    }
+    if (message.type === 'start-session') {
+      if (!testHost.grants.includes('sessions') || request.text && !testHost.grants.includes('prompt'))
+        return failure('NOT_GRANTED', 'Sitzungs- oder Promptberechtigung fehlt');
+      if (testHost.startFailure) return failure(testHost.startFailure, 'Test: Sitzungsstart verweigert');
+      return success({ sessionId: `ses-test-${++testHost.sessionCounter}`, directory: '/fake/project',
+        sent: testHost.startSent, linked: true });
+    }
+    if (message.type === 'clipboard-write') {
+      if (testHost.failClipboard) return failure();
+      if (request.text.length > 32000) return failure('HOST_REJECTED', 'Test: clipboard limit exceeded');
+      testHost.clipboard = request.text;
+      return success();
+    }
+    if (['session-link', 'open-session', 'open-url'].includes(message.type)) return success();
+    return failure('NOT_GRANTED', `Test: ${message.type} not granted`);
+  });
+</script>
+</html>
