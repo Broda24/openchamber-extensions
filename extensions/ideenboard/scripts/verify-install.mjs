@@ -2,7 +2,7 @@
 // All installation and storage writes stay inside a new isolated cache directory.
 import assert from 'node:assert/strict';
 import { readFile, mkdtemp, mkdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 
@@ -17,7 +17,7 @@ const { guestGrantScope } = await load('grant-scope');
 const { createBoardStorage, INDEX_KEY } = await import('../.test/board-storage.mjs');
 const webManifest = JSON.parse(await readFile(join(webRoot, 'package.json'), 'utf8'));
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const zip = await readFile(resolve(`../openchamber-ideenboard-${manifest.version}.zip`));
+const zip = await readFile(new URL(`../dist/openchamber-ideenboard-${manifest.version}.zip`, import.meta.url));
 const cache = join(homedir(), '.cache/openchamber/tmp/opencode');
 await mkdir(cache, { recursive: true });
 const directory = await mkdtemp(join(cache, 'ideenboard-verification-'));
