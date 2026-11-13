@@ -1,4 +1,4 @@
-# Ideenboard 2.0.0 für OpenChamber
+# Ideenboard 2.0.1 für OpenChamber
 
 Dein persönliches Kanban-Board für Ideen, Vorhaben und die aktuelle Arbeit. Läuft vollständig in OpenChamber; keine externen Dienste und kein zusätzlicher Serverprozess.
 
@@ -7,12 +7,16 @@ Dein persönliches Kanban-Board für Ideen, Vorhaben und die aktuelle Arbeit. L�
 Die fertige Installations-ZIP gibt es auf der [GitHub-Releases-Seite](https://github.com/Broda24/openchamber-extensions/releases/latest). Ältere Ideenboard-Releases und ihre Downloads bleiben erhalten.
 
 1. Bei einem Update zuerst im bisherigen Board **Backup** anklicken und den Text als `.json`-Datei sichern. OpenChamber löscht beim Ersetzen einer ZIP-Erweiterung den zugehörigen Erweiterungsspeicher.
-2. **Einstellungen → Erweiterungen → +** öffnen, `openchamber-ideenboard-2.0.0.zip` hinzufügen bzw. die bisherige Version ersetzen.
+2. **Einstellungen → Erweiterungen → +** öffnen, `openchamber-ideenboard-2.0.1.zip` hinzufügen bzw. die bisherige Version ersetzen.
 3. Die Berechtigungen **Sitzungen** und **Prompts senden** freigeben: nötig für die Projekt-/Chat-Anbindung und das bewusste Starten einer Arbeitssitzung mit erster Nachricht. Die Nachrichtenaktion erhält nur die jeweils ausgewählte Nachricht, nicht automatisch den gesamten Chat. Beim bloßen Öffnen der Erweiterung wird kein Prompt gesendet.
 4. Board über das Ideenboard-Symbol oder das **+**-Menü öffnen. Für mehr Platz ist es zusätzlich als Vollbildseite im Menü für Erweiterungsseiten oberhalb der Sitzungsliste erreichbar.
 5. Nach einem Update **Backup wiederherstellen** öffnen und die Datei auswählen oder ihren Text einfügen. Version-1-Backups werden automatisch übernommen.
 
 Benötigt OpenChamber Web/Desktop ab 2.5.1. Die ZIP enthält fertige JavaScript-Dateien; kein eigener Build erforderlich.
+
+## Neu in 2.0.1
+
+- **Fehler behoben:** Gleichzeitiges Speichern aus Panel und Vollbildseite kann das Board nicht mehr unlesbar machen; es gilt der zuletzt gespeicherte Stand. Eine Karte mit Fokus in ein anderes Board zu verschieben, löst dort nicht mehr den Fokus einer anderen Karte. Eine Chat-Nachricht, die gesammelt wird, während ein anderer Dialog offen ist, öffnet ihren Entwurf nach dem Schließen dieses Dialogs, und dieselbe Nachricht lässt sich erneut sammeln. Ideen aus Chats mit sehr langem Titel lassen sich wieder speichern. Ein Label-Filter für ein nicht mehr vorhandenes Label wird zurückgesetzt, statt alle Karten auszublenden.
 
 ## Die 13 Funktionen
 

@@ -48,8 +48,9 @@ let exportMessage = '';
 let preview: CardAttachment | null = null;
 let history: { state: BoardDocument; label: string }[] = [];
 let draggedId: string | null = null;
-let pendingMessage: GuestItem | null = null;
+let pendingMessage: { item: GuestItem; replay: boolean } | null = null;
 let handledMessage = '';
+let readyItem: GuestItem | null = null;
 let currentSession: SessionSnapshot | null = null;
 let directory: string | null = null;
 let chatCardId: string | null = null;
@@ -191,6 +192,8 @@ function render(): void {
   const doneCount = available.filter((card) => card.status === 'done').length;
   const trashCount = documentState.cards.filter((card) => card.boardId === boardId && card.deletedAt !== null).length;
   const labels = [...new Set(available.flatMap((card) => card.labels))].sort((a, b) => a.localeCompare(b, 'de'));
+  // A filter for a label that no longer exists would hide every card behind "Alle Labels".
+  if (filters.label && !labels.includes(filters.label)) filters.label = '';
   app.innerHTML = `<main class="app-shell">
     <header class="topbar"><div class="brand"><div class="brand__mark" aria-hidden="true"><span></span><span></span><span></span></div><div><p class="eyebrow">Ideen sammeln · Arbeit organisieren</p><h1>Ideenboard</h1></div></div>
       <div class="topbar__actions"><span class="save-state save-state--${saveState}" data-save-state role="status">${saveLabel()}</span>${button('undo', '↶ Rückgängig', '', false, history.length === 0)}${button('backup-copy', 'Backup')}${button('add', '＋ Neue Idee', '', true, documentState.cards.length >= MAX_CARDS)}</div></header>
@@ -211,6 +214,8 @@ function render(): void {
     field.focus();
     if (selection && selection[0] !== null && selection[1] !== null && (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)) field.setSelectionRange(selection[0], selection[1]);
   } else if (dialog) (dialog.querySelector<HTMLElement>('input:not([type="file"]), textarea, button'))?.focus();
+  const pending = pendingMessage;
+  if (pending && !otherDialogOpen()) queueMicrotask(() => { if (pendingMessage === pending) collectMessage(pending.item, pending.replay); });
 }
 
 function notify(message: string, tone: 'info' | 'success' | 'error' = 'info'): void {
@@ -257,7 +262,7 @@ async function load(): Promise<void> {
   try {
     documentState = await repository.load();
     loadState = 'ready'; saveState = 'saved'; render();
-    if (pendingMessage) collectMessage(pendingMessage);
+    if (pendingMessage) collectMessage(pendingMessage.item, pendingMessage.replay);
   } catch (error) {
     loadState = 'error'; loadError = error instanceof Error ? error.message : 'Speicher nicht erreichbar'; render();
   }
@@ -299,7 +304,11 @@ function saveCard(): void {
     let next = draft.existing ? replaceCard(documentState, card) : addCard(documentState, card);
     if (next === documentState) throw new Error(`Karte konnte nicht gespeichert werden. Bitte Eingaben, Speichergrenze und maximal ${MAX_CARDS} Karten (einschließlich Papierkorb) prüfen.`);
     if (draft.focus) next = setFocus(next, card.id);
-    else if (documentState.boards.some((board) => board.focusId === card.id)) next = setFocus(next, null, Date.now(), card.boardId);
+    else {
+      // Clear the board that held the focus, not the (possibly different) target board.
+      const holder = documentState.boards.find((board) => board.focusId === card.id);
+      if (holder) next = setFocus(next, null, Date.now(), holder.id);
+    }
     if (commit(next, 'Karte bearbeiten')) {
       if (boardId !== card.boardId) filters = { query: '', status: '', label: '', priority: '', due: 'all' };
       boardId = card.boardId; draft = null; editorError = ''; view = card.archivedAt === null ? 'active' : 'archive'; render();
@@ -424,14 +433,19 @@ async function startSession(cardId: string): Promise<void> {
   finally { startingCards.delete(cardId); render(); }
 }
 
-function collectMessage(item: GuestItem): void {
+const otherDialogOpen = () => Boolean(confirmation || preview || exportText !== null || importOpen || boardDialog || chatCardId);
+
+/** `replay`: the host re-sent the item this view was opened for (ready), not a new action. */
+function collectMessage(item: GuestItem, replay: boolean): void {
   const source = draftFromMessage(item);
   if (!source || item.kind !== 'message') return;
-  if (loadState !== 'ready') { pendingMessage = item; return; }
   const key = `${item.sessionId}:${item.messageId}`;
-  if (handledMessage === key) return;
+  if (replay && handledMessage === key) return;
+  // Another dialog would hide the draft, and closing it would discard the draft.
+  if (loadState !== 'ready' || otherDialogOpen()) { pendingMessage = { item, replay }; return; }
+  pendingMessage = null;
   const collect = () => {
-    handledMessage = key; pendingMessage = null;
+    handledMessage = key;
     openEditor();
     draft!.card.title = source.title; draft!.card.notes = source.notes; draft!.card.sessionLinks = [source.sessionLink];
     render();
@@ -599,10 +613,12 @@ app.addEventListener('drop', (event) => {
 app.addEventListener('dragend', () => { draggedId = null; app.querySelectorAll('.dragging, .drop-target').forEach((element) => element.classList.remove('dragging', 'drop-target')); });
 
 host.onReady((context) => {
+  // The SDK emits ready before re-emitting its item: remember it to recognize that replay.
+  readyItem = context.item;
   applyHostReady(context, document.documentElement); directory = context.directory;
   if (!loaded) { loaded = true; void load(); }
 });
 host.onSession((session) => { currentSession = session; if (chatCardId && loadState === 'ready') render(); });
 host.onDirectory((value) => { directory = value; });
-host.onItem((item) => { if (item) collectMessage(item); });
+host.onItem((item) => { if (item) collectMessage(item, item === readyItem); });
 window.addEventListener('beforeunload', () => host.dispose(), { once: true });

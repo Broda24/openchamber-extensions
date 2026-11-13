@@ -12,6 +12,8 @@ export interface StartCardSessionOutcome {
 const PROMPT_LIMIT = 16_000;
 const TITLE_NOTICE = ' … [gekürzt]';
 const TEXT_NOTICE = '\n\n[Nachricht gekürzt; vollständigen Text im verknüpften Chat ansehen.]';
+/** Matches the card model's limit for session link titles; host session titles are unbounded. */
+const SESSION_TITLE_LIMIT = 500;
 
 function truncate(text: string, limit: number, notice: string): string {
   if (text.length <= limit) return text;
@@ -62,7 +64,7 @@ export function draftFromMessage(item: GuestItem): { title: string; notes: strin
   return {
     title: truncate(firstLine.replace(/^#{1,6}\s+/, ''), 120, TITLE_NOTICE),
     notes: truncate(text, 6_000, TEXT_NOTICE),
-    sessionLink: { sessionId: item.sessionId, title: item.sessionTitle, directory: item.directory },
+    sessionLink: { sessionId: item.sessionId, title: truncate(plainText(item.sessionTitle), SESSION_TITLE_LIMIT, TITLE_NOTICE), directory: item.directory },
   };
 }
 
@@ -141,5 +143,5 @@ export async function linkCurrentSession(
   directory: string | null,
 ): Promise<SessionLink> {
   await host.sessionLink(cardReference(card));
-  return { sessionId: session.id, title: session.title, directory };
+  return { sessionId: session.id, title: truncate(plainText(session.title), SESSION_TITLE_LIMIT, TITLE_NOTICE), directory };
 }

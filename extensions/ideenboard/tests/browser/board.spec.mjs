@@ -570,3 +570,77 @@ test('full board visual review with labels, checklist, focus and multiple column
   expect(await frame.locator('body').evaluate((body) => body.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('ideenboard-v2.png'), fullPage: true });
 });
+
+const storedBoard = (page) => page.evaluate(() => {
+  const index = testHost.values['ideenboard-v2-index']; let text = '';
+  for (let chunk = 0; chunk < index.chunks; chunk++) text += atob(testHost.values[`ideenboard-v2-snapshot-${index.snapshotId}-${chunk}`]);
+  return JSON.parse(text);
+});
+const collectItem = (messageId, overrides = {}) => ({ kind: 'message', action: 'collect-idea', sessionId: 'ses-source', sessionTitle: 'Quellchat',
+  messageId, directory: '/fake/project', role: 'assistant', text: 'Gesammelte Idee\nDetails', ...overrides });
+
+test('moving the focused card to another board without focus keeps that board\'s own focus', async ({ page }) => {
+  await page.goto(origin);
+  await seedBoard(page, documentV2([v2Card('x', { status: 'in-progress' }), v2Card('y', { boardId: 'other', status: 'in-progress' })],
+    [{ id: 'default', name: 'Mein Board', focusId: 'x' }, { id: 'other', name: 'Anderes Board', focusId: 'y' }]));
+  const frame = page.frameLocator('iframe');
+  await card(frame, 'Idee x').getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+  const dialog = frame.getByRole('dialog');
+  await dialog.getByLabel('Board der Karte', { exact: true }).selectOption('other');
+  await dialog.locator('[name="focus"]').uncheck();
+  await dialog.getByRole('button', { name: 'Speichern', exact: true }).click();
+  await saved(frame);
+  expect((await storedBoard(page)).boards).toEqual([{ id: 'default', name: 'Mein Board', focusId: null }, { id: 'other', name: 'Anderes Board', focusId: 'y' }]);
+});
+
+test('a message collected while another dialog is open becomes a draft once that dialog closes', async ({ page }) => {
+  const frame = await openBoard(page);
+  await createCard(frame, 'Karte');
+  const chat = await openChat(frame, 'Karte');
+  await page.evaluate((item) => testHost.pushItem(item), collectItem('msg-hidden'));
+  await expect(chat).toContainText('Chat und Arbeitssitzung');
+  await chat.getByRole('button', { name: 'Schließen', exact: true }).click();
+  await expect(frame.getByRole('dialog').getByLabel('Titel', { exact: true })).toHaveValue('Gesammelte Idee');
+});
+
+test('the same message can be collected again by a new action, but a ready replay opens no second draft', async ({ page }) => {
+  const frame = await openBoard(page);
+  await page.evaluate((item) => testHost.pushItem(item), collectItem('msg-again'));
+  const dialog = frame.getByRole('dialog');
+  await expect(dialog.getByLabel('Titel', { exact: true })).toHaveValue('Gesammelte Idee');
+  await dialog.getByRole('button', { name: 'Abbrechen', exact: true }).click();
+  await expect(frame.getByRole('dialog')).toHaveCount(0);
+  await page.evaluate(() => testHost.resendReady());
+  await page.waitForTimeout(300);
+  await expect(frame.getByRole('dialog')).toHaveCount(0);
+  await page.evaluate((item) => testHost.pushItem(item), collectItem('msg-again'));
+  await expect(dialog.getByLabel('Titel', { exact: true })).toHaveValue('Gesammelte Idee');
+  await action(frame, 'save-card').click();
+  await expect(card(frame, 'Gesammelte Idee')).toBeVisible();
+  await page.evaluate(() => testHost.resendReady());
+  await page.waitForTimeout(300);
+  await expect(frame.getByRole('dialog')).toHaveCount(0);
+});
+
+test('the item a view was opened for becomes a draft exactly once', async ({ page }) => {
+  await page.goto(origin);
+  await page.evaluate((item) => { testHost.item = item; testHost.reloadFrame(); }, collectItem('msg-open'));
+  const frame = page.frameLocator('iframe');
+  const dialog = frame.getByRole('dialog');
+  await expect(dialog.getByLabel('Titel', { exact: true })).toHaveValue('Gesammelte Idee');
+  await dialog.getByRole('button', { name: 'Abbrechen', exact: true }).click();
+  await page.evaluate(() => testHost.resendReady());
+  await page.waitForTimeout(300);
+  await expect(frame.getByRole('dialog')).toHaveCount(0);
+});
+
+test('a label filter for a label that no longer exists is reset instead of hiding every card', async ({ page }) => {
+  const frame = await openBoard(page);
+  await createCard(frame, 'Mit Label', { labels: 'X' });
+  await frame.getByLabel('Label filtern', { exact: true }).selectOption('X');
+  await card(frame, 'Mit Label').getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+  await frame.getByRole('dialog').locator('[name="labels"]').fill('');
+  await frame.getByRole('dialog').getByRole('button', { name: 'Speichern', exact: true }).click();
+  await expect(card(frame, 'Mit Label')).toBeVisible();
+  await saved(frame);
+});

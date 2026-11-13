@@ -188,3 +188,16 @@ test('linkCurrentSession propagates refusal, never returns an unconfirmed link',
   const host = { async sessionLink() { throw error; } };
   await assert.rejects(linkCurrentSession(host, card(), { id: 'ses-current', title: 'Chat' }, null), (received) => received === error);
 });
+
+test('long host session titles are capped so collected and linked cards stay saveable', async () => {
+  const { addCard, emptyBoard } = await import('../.test/board-model.mjs');
+  const longTitle = 'T'.repeat(501);
+  const draft = draftFromMessage(message({ sessionTitle: longTitle }));
+  const linked = await linkCurrentSession(fakeHost(), card(), { id: 'ses-current', title: longTitle }, null);
+  for (const link of [draft.sessionLink, linked]) {
+    assert.ok(link.title.length <= 500 && link.title.endsWith('[gekürzt]'));
+    const stored = { id: 'idea-x', boardId: 'default', title: 'Idee', notes: '', status: 'ideas', createdAt: 1, updatedAt: 1,
+      labels: [], priority: 'normal', dueDate: null, checklist: [], links: [], attachments: [], sessionLinks: [link], archivedAt: null, deletedAt: null };
+    assert.equal(addCard(emptyBoard(), stored).cards.length, 1);
+  }
+});

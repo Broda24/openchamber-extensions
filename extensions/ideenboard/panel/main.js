@@ -2023,6 +2023,8 @@ ${GUEST_UI_LOOK_CSS}`;
   }
   function createBoardStorage(storage) {
     let queue = Promise.resolve();
+    const committed = /* @__PURE__ */ new Set();
+    const abandoned = /* @__PURE__ */ new Set();
     function serial(operation) {
       const pending = queue.then(operation);
       queue = pending.catch(() => void 0);
@@ -2056,13 +2058,22 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     async function current() {
       const value = await storage.get(INDEX_KEY);
-      return value === void 0 ? null : parseIndex(value);
+      if (value === void 0) return null;
+      const index = parseIndex(value);
+      committed.add(index.snapshotId);
+      return index;
     }
-    async function cleanup(keep) {
+    async function cleanup(live) {
+      const dead = new Set([...committed, ...abandoned].filter((id3) => id3 !== live?.snapshotId));
+      if (!dead.size) return;
       const keys = await storage.keys();
       for (const key of keys) {
         const match = SNAPSHOT_KEY.exec(key);
-        if (match && match[1] !== keep?.snapshotId) await storage.delete(key);
+        if (match && dead.has(match[1])) await storage.delete(key);
+      }
+      for (const id3 of dead) {
+        committed.delete(id3);
+        abandoned.delete(id3);
       }
     }
     return {
@@ -2095,14 +2106,17 @@ ${GUEST_UI_LOOK_CSS}`;
             snapshotId = randomId();
           } while (snapshotId === previous?.snapshotId || [...existingKeys].some((key) => key.startsWith(`${SNAPSHOT_PREFIX}${snapshotId}-`)));
           const index = { version: 2, snapshotId, chunks: Math.ceil(bytes.length / RAW_CHUNK_BYTES), bytes: bytes.length, checksum: checksum(bytes) };
+          abandoned.add(snapshotId);
           for (let i = 0; i < index.chunks; i++) {
             const chunk = toBase64(bytes.subarray(i * RAW_CHUNK_BYTES, (i + 1) * RAW_CHUNK_BYTES));
             if (bytesOf(chunk) > MAX_CHUNK_BYTES) throw new Error("Speicherteil \xFCberschreitet die sichere Gr\xF6\xDFe.");
             await storage.set(keyFor(index, i), chunk);
           }
           await storage.set(INDEX_KEY, index);
+          abandoned.delete(snapshotId);
+          committed.add(snapshotId);
           try {
-            await cleanup(index);
+            await cleanup(await current());
             await storage.delete(STORAGE_KEY);
           } catch {
           }
@@ -2115,6 +2129,7 @@ ${GUEST_UI_LOOK_CSS}`;
   var PROMPT_LIMIT = 16e3;
   var TITLE_NOTICE = " \u2026 [gek\xFCrzt]";
   var TEXT_NOTICE = "\n\n[Nachricht gek\xFCrzt; vollst\xE4ndigen Text im verkn\xFCpften Chat ansehen.]";
+  var SESSION_TITLE_LIMIT = 500;
   function truncate(text2, limit, notice) {
     if (text2.length <= limit) return text2;
     let prefix = text2.slice(0, limit - notice.length);
@@ -2158,7 +2173,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
     return {
       title: truncate(firstLine.replace(/^#{1,6}\s+/, ""), 120, TITLE_NOTICE),
       notes: truncate(text2, 6e3, TEXT_NOTICE),
-      sessionLink: { sessionId: item.sessionId, title: item.sessionTitle, directory: item.directory }
+      sessionLink: { sessionId: item.sessionId, title: truncate(plainText(item.sessionTitle), SESSION_TITLE_LIMIT, TITLE_NOTICE), directory: item.directory }
     };
   }
   function cardReference(card) {
@@ -2223,7 +2238,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
   }
   async function linkCurrentSession(host2, card, session, directory2) {
     await host2.sessionLink(cardReference(card));
-    return { sessionId: session.id, title: session.title, directory: directory2 };
+    return { sessionId: session.id, title: truncate(plainText(session.title), SESSION_TITLE_LIMIT, TITLE_NOTICE), directory: directory2 };
   }
 
   // panel/main.ts
@@ -2258,6 +2273,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
   var draggedId = null;
   var pendingMessage = null;
   var handledMessage = "";
+  var readyItem = null;
   var currentSession = null;
   var directory = null;
   var chatCardId = null;
@@ -2397,6 +2413,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
     const doneCount = available.filter((card) => card.status === "done").length;
     const trashCount = documentState.cards.filter((card) => card.boardId === boardId && card.deletedAt !== null).length;
     const labels = [...new Set(available.flatMap((card) => card.labels))].sort((a, b) => a.localeCompare(b, "de"));
+    if (filters.label && !labels.includes(filters.label)) filters.label = "";
     app.innerHTML = `<main class="app-shell">
     <header class="topbar"><div class="brand"><div class="brand__mark" aria-hidden="true"><span></span><span></span><span></span></div><div><p class="eyebrow">Ideen sammeln \xB7 Arbeit organisieren</p><h1>Ideenboard</h1></div></div>
       <div class="topbar__actions"><span class="save-state save-state--${saveState}" data-save-state role="status">${saveLabel()}</span>${button2("undo", "\u21B6 R\xFCckg\xE4ngig", "", false, history.length === 0)}${button2("backup-copy", "Backup")}${button2("add", "\uFF0B Neue Idee", "", true, documentState.cards.length >= MAX_CARDS)}</div></header>
@@ -2417,6 +2434,10 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
       field2.focus();
       if (selection2 && selection2[0] !== null && selection2[1] !== null && (field2 instanceof HTMLTextAreaElement || field2 instanceof HTMLInputElement)) field2.setSelectionRange(selection2[0], selection2[1]);
     } else if (dialog) dialog.querySelector('input:not([type="file"]), textarea, button')?.focus();
+    const pending = pendingMessage;
+    if (pending && !otherDialogOpen()) queueMicrotask(() => {
+      if (pendingMessage === pending) collectMessage(pending.item, pending.replay);
+    });
   }
   function notify(message, tone2 = "info") {
     banner = { message, tone: tone2 };
@@ -2477,7 +2498,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
       loadState = "ready";
       saveState = "saved";
       render();
-      if (pendingMessage) collectMessage(pendingMessage);
+      if (pendingMessage) collectMessage(pendingMessage.item, pendingMessage.replay);
     } catch (error) {
       loadState = "error";
       loadError = error instanceof Error ? error.message : "Speicher nicht erreichbar";
@@ -2520,7 +2541,10 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
       let next = draft.existing ? replaceCard(documentState, card) : addCard(documentState, card);
       if (next === documentState) throw new Error(`Karte konnte nicht gespeichert werden. Bitte Eingaben, Speichergrenze und maximal ${MAX_CARDS} Karten (einschlie\xDFlich Papierkorb) pr\xFCfen.`);
       if (draft.focus) next = setFocus(next, card.id);
-      else if (documentState.boards.some((board) => board.focusId === card.id)) next = setFocus(next, null, Date.now(), card.boardId);
+      else {
+        const holder = documentState.boards.find((board) => board.focusId === card.id);
+        if (holder) next = setFocus(next, null, Date.now(), holder.id);
+      }
       if (commit(next, "Karte bearbeiten")) {
         if (boardId !== card.boardId) filters = { query: "", status: "", label: "", priority: "", due: "all" };
         boardId = card.boardId;
@@ -2695,18 +2719,19 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
       render();
     }
   }
-  function collectMessage(item) {
+  var otherDialogOpen = () => Boolean(confirmation || preview || exportText !== null || importOpen || boardDialog || chatCardId);
+  function collectMessage(item, replay) {
     const source = draftFromMessage(item);
     if (!source || item.kind !== "message") return;
-    if (loadState !== "ready") {
-      pendingMessage = item;
+    const key = `${item.sessionId}:${item.messageId}`;
+    if (replay && handledMessage === key) return;
+    if (loadState !== "ready" || otherDialogOpen()) {
+      pendingMessage = { item, replay };
       return;
     }
-    const key = `${item.sessionId}:${item.messageId}`;
-    if (handledMessage === key) return;
+    pendingMessage = null;
     const collect = () => {
       handledMessage = key;
-      pendingMessage = null;
       openEditor();
       draft.card.title = source.title;
       draft.card.notes = source.notes;
@@ -3078,6 +3103,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
     app.querySelectorAll(".dragging, .drop-target").forEach((element) => element.classList.remove("dragging", "drop-target"));
   });
   host.onReady((context) => {
+    readyItem = context.item;
     applyHostReady(context, document.documentElement);
     directory = context.directory;
     if (!loaded) {
@@ -3093,7 +3119,7 @@ ${truncate(links, 3e3, "\n[Links gek\xFCrzt]") || "(keine)"}`,
     directory = value;
   });
   host.onItem((item) => {
-    if (item) collectMessage(item);
+    if (item) collectMessage(item, item === readyItem);
   });
   window.addEventListener("beforeunload", () => host.dispose(), { once: true });
 })();

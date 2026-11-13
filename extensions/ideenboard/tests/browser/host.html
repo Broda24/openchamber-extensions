@@ -36,7 +36,14 @@
     pushSession(session) { this.currentSession = session; push('session', { session }); },
     pushItem(item) { this.item = item; push('item', { item }); },
     pushDirectory(directory) { this.directory = directory; push('directory', { directory }); },
+    // A repeated ready (e.g. after a reconnect) replays the item the view was opened for.
+    resendReady() { push('ready', readyPayload()); },
   };
+  const readyPayload = () => ({
+    theme: { mode: 'dark', tokens: theme }, locale: 'de', directory: testHost.directory,
+    session: testHost.currentSession, surface: 'panel', connection: { connected: false, account: '' },
+    settings: {}, item: testHost.item,
+  });
   const theme = {
     background: '#18181b', elevated: '#232328', foreground: '#e7e5e4',
     muted: '#a1a1aa', subtle: '#27272a', border: '#3d3d44', hover: '#303037',
@@ -54,11 +61,7 @@
     channel = message.channel;
     const send = (value) => event.source.postMessage({ channel: message.channel, v: 1, ...value }, '*');
     if (message.type === 'hello') {
-      send({ type: 'ready', payload: {
-        theme: { mode: 'dark', tokens: theme }, locale: 'de', directory: testHost.directory,
-        session: testHost.currentSession, surface: 'panel', connection: { connected: false, account: '' },
-        settings: {}, item: testHost.item,
-      } });
+      send({ type: 'ready', payload: readyPayload() });
       return;
     }
     testHost.requests.push(structuredClone(message));

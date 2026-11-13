@@ -1,6 +1,6 @@
 {
   "name": "openchamber-ideenboard",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "type": "module",
   "description": "Persönliches Kanban-Board für Ideen und aktuelle Arbeit in OpenChamber",
