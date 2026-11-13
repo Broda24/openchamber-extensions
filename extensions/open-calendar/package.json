@@ -1,0 +1,30 @@
+{
+  "name": "open-calendar",
+  "version": "0.2.1",
+  "private": true,
+  "type": "module",
+  "description": "Lokaler Kalender mit KI-Eingabefeld für OpenChamber",
+  "scripts": {
+    "build": "node --check panel/main.js",
+    "package": "npm run build && python3 scripts/package.py"
+  },
+  "dependencies": {
+    "@openchamber/sdk": "2.5.1"
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.5.1"
+    },
+    "contributes": {
+      "panel": {
+        "id": "open-calendar",
+        "name": "OpenCalendar",
+        "icon": "icon.svg",
+        "entry": "panel/index.html"
+      },
+      "page": true,
+      "capabilities": ["model"]
+    }
+  }
+}
