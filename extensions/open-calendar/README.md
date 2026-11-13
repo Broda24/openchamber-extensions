@@ -1,4 +1,4 @@
-# OpenCalendar 0.2.1
+# OpenCalendar 0.2.2
 
 Ein lokaler Kalender als OpenChamber-Erweiterung: Termine manuell pflegen, optional per KI-Eingabefeld anlegen oder abfragen und einen Posteo-Kalender ausschließlich lesend als ICS-Snapshot einblenden.
 
@@ -6,11 +6,16 @@ Die Erweiterung läuft vollständig im Panel. Es gibt keinen Server, keine Daten
 
 ## Installation
 
-1. `open-calendar-0.2.1.zip` (gebaut mit `npm run package`, siehe unten) in OpenChamber unter **Einstellungen → Erweiterungen** als Update installieren/ersetzen. Nicht vorher deinstallieren: Eine Deinstallation löscht den Erweiterungsspeicher. Vorher ein Backup exportieren.
+1. `open-calendar-0.2.2.zip` (gebaut mit `npm run package`, siehe unten) in OpenChamber unter **Einstellungen → Erweiterungen** als Update installieren/ersetzen. Nicht vorher deinstallieren: Eine Deinstallation löscht den Erweiterungsspeicher. Vorher ein Backup exportieren.
 2. Die Berechtigungsabfrage bestätigen. Verlangt wird ausschließlich **Modellzugriff** (`model`) für das KI-Eingabefeld.
 3. OpenCalendar als Panel in der Seitenleiste oder als Vollbildseite öffnen.
 
 Die ZIP enthält nur die Laufzeitdateien (`package.json`, `icon.svg`, `README.md`, `panel/index.html`, `panel/styles.css`, `panel/main.js`). Nach der Installation liegt sie kopiert im Erweiterungsverzeichnis von OpenChamber; die Originaldatei kann danach verschoben werden.
+
+## Neu in 0.2.2
+
+- **Fehler behoben:** Mehrtägige zeitgebundene Termine behalten beim Bearbeiten ihr Enddatum; das Formular zeigt dafür das Feld „Endet am“, und ein verschobenes Startdatum nimmt das Enddatum mit. Termine, die genau um Mitternacht enden, erscheinen wieder im Zeitraster. Alle Ansichten und KI-Antworten ordnen Termine dem Tag der eingestellten Zeitzone zu, auch nach einem Zeitzonenwechsel. Ein KI-Vorschlag für einen inzwischen geänderten oder gelöschten Termin wird verworfen statt gespeichert.
+- **ICS-Import:** Ein einzelner nicht speicherbarer Termin (z. B. zeitgebunden über sieben Tage) wird mit Hinweis übersprungen, statt den ganzen Import abzubrechen. Ganztägige Termine mit `DURATION`, `DTEND` in UTC oder eigener Zone sowie `EXDATE`/`RECURRENCE-ID` in UTC werden korrekt übernommen; Erinnerungen (`VALARM`) färben Titel und Beschreibung nicht mehr. Serien mit `COUNT` oder `UNTIL` melden keine Kürzung mehr, `BYMONTHDAY`/`BYDAY` zählen in Datumsreihenfolge, und jährliche Serien mit `BYMONTH` im Monat des Starts werden wiederholt.
 
 ## Neu in 0.2.1
 
@@ -71,9 +76,11 @@ Der Erweiterungsspeicher von OpenChamber wird über `host.storage` genutzt. Er l
 
 Für OpenCalendar gibt es keinen TypeScript-Quellstand: Als Basis für 0.2.1 lag nur das lesbare JavaScript-Bundle von 0.2.0 vor. Änderungen werden daher direkt in `panel/main.js` gepflegt; es findet keine TypeScript-Kompilierung statt. Die Abschnittsmarken im Bundle (`// panel/model.ts`, `// panel/storage.ts`, `// panel/ics.ts`, `// panel/ai.ts`, `// panel/main.ts`) zeigen, wo der eigene Code nach dem eingebundenen `@openchamber/sdk` beginnt.
 
-Die Node- und Browsertests sowie die Installationsprüfung aus der Entwicklung von 0.2.1 sind nicht in diesem Repository enthalten. Hier vorhanden sind:
+Die Tests laden die Funktionen zur Laufzeit direkt aus `panel/main.js` (`tests/load-panel.mjs`) und prüfen damit genau den ausgelieferten Stand. Die Browsertests nutzen einen Test-Host unter `sandbox="allow-scripts"` ohne echtes Modell. Tests gehören nicht zur ZIP.
 
 ```sh
-npm run build --workspace open-calendar    # Syntaxprüfung des gepflegten JavaScript-Bundles
-npm run package --workspace open-calendar  # baut extensions/open-calendar/dist/open-calendar-0.2.1.zip
+npm run build --workspace open-calendar         # Syntaxprüfung des gepflegten JavaScript-Bundles
+npm test --workspace open-calendar              # Node-Tests: Termine, Zeitzonen, ICS-Import
+npm run test:browser --workspace open-calendar  # Browsertests: Formular, KI-Bestätigung
+npm run package --workspace open-calendar       # baut extensions/open-calendar/dist/open-calendar-0.2.2.zip
 ```

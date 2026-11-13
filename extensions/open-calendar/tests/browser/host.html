@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>Isolierter OpenChamber-Sandbox-Test</title>
+<style>body { margin: 0; } iframe { display: block; width: 100%; height: 95vh; border: 0; }</style>
+<iframe title="OpenCalendar" sandbox="allow-scripts" src="/panel/index.html"></iframe>
+<script>
+  // Test-only SDK peer. No requests ever reach OpenChamber or a real model.
+  let frame = document.querySelector('iframe');
+  const entries = new Map();
+  window.testHost = {
+    entries, requests: [], answers: [],
+    reloadFrame() {
+      const fresh = frame.cloneNode(false);
+      frame.replaceWith(fresh);
+      frame = fresh;
+    },
+  };
+  const theme = {
+    background: '#18181b', elevated: '#232328', foreground: '#e7e5e4',
+    muted: '#a1a1aa', subtle: '#27272a', border: '#3d3d44', hover: '#303037',
+    selection: '#494054', focus: '#a78bfa', primary: '#8b5cf6', mutedSurface: '#202024',
+    elevatedForeground: '#fafafa', active: '#39353f', selectionForeground: '#fafafa',
+    primaryForeground: '#ffffff', primaryText: '#c4b5fd', successText: '#86efac',
+    warningText: '#fde68a', errorText: '#fca5a5', infoText: '#93c5fd',
+    success: '#4ade80', warning: '#fbbf24', error: '#f87171', info: '#60a5fa',
+    font: 'system-ui, sans-serif', mono: 'monospace', radius: '8px',
+  };
+  addEventListener('message', (event) => {
+    if (event.source !== frame.contentWindow || event.data?.v !== 1) return;
+    const message = event.data;
+    const send = (value) => event.source.postMessage({ channel: message.channel, v: 1, ...value }, '*');
+    if (message.type === 'hello') {
+      send({ type: 'ready', payload: {
+        theme: { mode: 'dark', tokens: theme }, locale: 'de', directory: null, session: null, surface: 'page',
+        connection: { connected: false, account: '' }, settings: {}, item: null,
+      } });
+      return;
+    }
+    if (message.id === undefined) return;
+    testHost.requests.push(structuredClone(message));
+    const success = (payload = {}) => send({ type: 'result', id: message.id, ok: true, payload });
+    const request = message.payload;
+    if (message.type === 'storage') {
+      if (request.op === 'get') return success({ storage: true, op: 'get', found: entries.has(request.key),
+        ...(entries.has(request.key) ? { value: structuredClone(entries.get(request.key)) } : {}) });
+      if (request.op === 'keys') return success({ storage: true, op: 'keys', keys: [...entries.keys()].sort() });
+      if (request.op === 'set') { entries.set(request.key, structuredClone(request.value)); return success({ storage: true, op: 'set' }); }
+      if (request.op === 'delete') { entries.delete(request.key); return success({ storage: true, op: 'delete' }); }
+    }
+    if (message.type === 'generate') return success({ text: testHost.answers.shift() ?? '{"action":"unknown"}' });
+    send({ type: 'result', id: message.id, ok: false, code: 'NOT_GRANTED', error: `Test: ${message.type} not granted` });
+  });
+</script>
+</html>

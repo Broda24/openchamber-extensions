@@ -1964,7 +1964,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const parts = partsInZone(value, timeZone);
     return `${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
   }
-  function formatTimeRange(event) {
+  function formatTimeRange(event, zone = event.timeZone) {
     if (event.allDay) {
       if (!event.startDate || !event.endDateExclusive) return "Ganzt\xE4gig";
       const lastDay = addDays(event.endDateExclusive, -1);
@@ -1973,7 +1973,7 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!event.startsAt || !event.endsAt) return "";
     const start = instantOfIso(event.startsAt);
     const end = instantOfIso(event.endsAt);
-    return `${formatClock(start, event.timeZone)}\u2013${formatClock(end, event.timeZone)}`;
+    return `${formatClock(start, zone)}\u2013${formatClock(end, zone)}`;
   }
   function formatEventRange(event) {
     if (event.allDay) {
@@ -2001,28 +2001,28 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     return instantOfIso(event.endsAt ?? "");
   }
-  function eventDayRange(event) {
+  function eventDayRange(event, zone = event.timeZone) {
     if (event.allDay) {
       const start2 = event.startDate ?? todayKey(event.timeZone);
       return { start: start2, endExclusive: event.endDateExclusive ?? addDays(start2, 1) };
     }
     const start = instantOfIso(event.startsAt ?? "");
     const end = instantOfIso(event.endsAt ?? "");
-    const startDay = dayKeyOf(start, event.timeZone);
-    let endDay = dayKeyOf(new Date(end.getTime() - 1), event.timeZone);
+    const startDay = dayKeyOf(start, zone);
+    let endDay = dayKeyOf(new Date(end.getTime() - 1), zone);
     if (endDay < startDay) endDay = startDay;
     return { start: startDay, endExclusive: addDays(endDay, 1) };
   }
-  function occursOnDay(event, dayKey) {
-    const range = eventDayRange(event);
+  function occursOnDay(event, dayKey, zone) {
+    const range = eventDayRange(event, zone);
     return range.start <= dayKey && dayKey < range.endExclusive;
   }
-  function overlapsDayRange(event, fromDay, toDayExclusive) {
-    const range = eventDayRange(event);
+  function overlapsDayRange(event, fromDay, toDayExclusive, zone) {
+    const range = eventDayRange(event, zone);
     return range.start < toDayExclusive && range.endExclusive > fromDay;
   }
-  function eventsOnDay(events2, dayKey) {
-    return sortEvents(events2.filter((event) => occursOnDay(event, dayKey)));
+  function eventsOnDay(events2, dayKey, zone) {
+    return sortEvents(events2.filter((event) => occursOnDay(event, dayKey, zone)));
   }
   function sortEvents(events2) {
     return [...events2].sort((a, b) => {
@@ -2171,7 +2171,7 @@ ${GUEST_UI_LOOK_CSS}`;
     let result = events2;
     if (options.localOnly) result = result.filter((event) => event.source === "local");
     else if (options.includePosteo === false) result = result.filter((event) => event.source === "local");
-    if (options.fromDay && options.toDayExclusive) result = result.filter((event) => overlapsDayRange(event, options.fromDay, options.toDayExclusive));
+    if (options.fromDay && options.toDayExclusive) result = result.filter((event) => overlapsDayRange(event, options.fromDay, options.toDayExclusive, options.zone));
     if (options.query) result = result.filter((event) => matchesQuery(event, options.query));
     return sortEvents(result);
   }
@@ -2586,7 +2586,7 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     const freq = (parts.FREQ ?? "").toUpperCase();
     if (!["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq)) return { rule: null, unsupported: "nicht unterst\xFCtzte Frequenz" };
-    const unsupportedKeys = Object.keys(parts).filter((key) => !["FREQ", "INTERVAL", "COUNT", "UNTIL", "BYDAY", "WKST", "BYMONTHDAY"].includes(key));
+    const unsupportedKeys = Object.keys(parts).filter((key) => !["FREQ", "INTERVAL", "COUNT", "UNTIL", "BYDAY", "WKST", "BYMONTHDAY", "BYMONTH"].includes(key));
     if (unsupportedKeys.length) return { rule: null, unsupported: unsupportedKeys.join(", ") };
     if (parts.WKST && parts.WKST.toUpperCase() !== "MO") return { rule: null, unsupported: "Wochenstart ungleich Montag" };
     const byDay = [];
@@ -2603,7 +2603,9 @@ ${GUEST_UI_LOOK_CSS}`;
     if ((freq === "DAILY" || freq === "WEEKLY") && byDay.some((entry) => entry.ordinal !== null)) {
       return { rule: null, unsupported: "BYDAY mit Ordnungszahl bei Tages-/Wochenserie" };
     }
-    const byMonthDay = (parts.BYMONTHDAY ?? "").split(",").filter(Boolean).map(Number).filter((day) => Number.isInteger(day) && day >= 1 && day <= 31);
+    const byMonthDay = (parts.BYMONTHDAY ?? "").split(",").filter(Boolean).map(Number).filter((day) => Number.isInteger(day) && day >= 1 && day <= 31).sort((a, b) => a - b);
+    const byMonth = parts.BYMONTH ? parts.BYMONTH.split(",").map(Number) : null;
+    if (byMonth && (freq !== "YEARLY" || byMonth.length !== 1 || !Number.isInteger(byMonth[0]))) return { rule: null, unsupported: "BYMONTH" };
     const count = parts.COUNT ? Number(parts.COUNT) : null;
     if (parts.COUNT && (!Number.isFinite(count) || count < 1)) return { rule: null, unsupported: "COUNT" };
     const until = parts.UNTIL ? parseIcsDate(parts.UNTIL, {}) : null;
@@ -2617,7 +2619,8 @@ ${GUEST_UI_LOOK_CSS}`;
         untilInstant: until && !until.dateOnly && /Z$/i.test(parts.UNTIL ?? "") ? Date.UTC(Number(until.day.slice(0, 4)), Number(until.day.slice(5, 7)) - 1, Number(until.day.slice(8, 10)), Number(until.time.slice(0, 2)), Number(until.time.slice(3, 5)), 0) : null,
         untilWall: until && !until.dateOnly && !/Z$/i.test(parts.UNTIL ?? "") ? `${until.day}T${until.time}` : null,
         byDay,
-        byMonthDay
+        byMonthDay,
+        byMonth: byMonth ? byMonth[0] : null
       },
       unsupported: null
     };
@@ -2728,16 +2731,12 @@ ${GUEST_UI_LOOK_CSS}`;
     const naive = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)), Number(time.slice(0, 2)), Number(time.slice(3, 5)), 0);
     return { instant: new Date(naive - offsetFromVTimezone(zone.timezone, day, time)), adjusted: false };
   }
-  function wallKey(date) {
-    return date.time ? `${date.day}T${date.time}` : date.day;
-  }
-  function occurrenceFrom(date, end, durationMs, zone, displayZone) {
+  function occurrenceFrom(date, end, durationMs, zone, displayZone, endZone = zone) {
     if (date.utc) {
       const time = date.time ?? "00:00";
       const start2 = instantFor({ kind: "utc" }, date.day, time).instant;
       let endInstant2;
-      if (end?.utc) endInstant2 = instantFor({ kind: "utc" }, end.day, end.time ?? time).instant;
-      else if (end && !end.dateOnly) endInstant2 = instantFor(zone, end.day, end.time ?? time).instant;
+      if (end && !end.dateOnly) endInstant2 = instantFor(endZone, end.day, end.time ?? time).instant;
       else endInstant2 = new Date(start2.getTime() + (durationMs ?? 36e5));
       if (endInstant2.getTime() <= start2.getTime()) endInstant2 = new Date(start2.getTime() + 36e5);
       return {
@@ -2752,7 +2751,7 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     if (date.dateOnly) {
       const startDay = date.day;
-      const endDay = end?.dateOnly ? end.day : addDays(startDay, 1);
+      const endDay = end?.dateOnly ? end.day : addDays(startDay, durationMs ? Math.round(durationMs / 864e5) : 1);
       const endExclusive = endDay <= startDay ? addDays(startDay, 1) : endDay;
       return { startDay, startTime: null, allDay: true, startDate: startDay, endDateExclusive: endExclusive, startsAt: null, endsAt: null };
     }
@@ -2760,7 +2759,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const start = instantFor(zone, date.day, startTime).instant;
     let endInstant;
     if (end?.dateOnly) endInstant = instantFor(zone, end.day, startTime).instant;
-    else if (end?.time) endInstant = instantFor(zone, end.day, end.time).instant;
+    else if (end?.time) endInstant = instantFor(endZone, end.day, end.time).instant;
     else endInstant = new Date(start.getTime() + (durationMs ?? 36e5));
     if (endInstant.getTime() <= start.getTime()) endInstant = new Date(start.getTime() + 36e5);
     return {
@@ -2827,12 +2826,15 @@ ${GUEST_UI_LOOK_CSS}`;
   function generateDays(rule, baseDay, windowStart, windowEnd) {
     const days = [];
     const base = parseDay(baseDay);
+    const finite = rule.count !== null;
+    // COUNT ends a series before the cap; only reaching the cap itself is a truncation.
+    const limit = finite ? Math.min(rule.count, MAX_SERIES_OCCURRENCES) : MAX_SERIES_OCCURRENCES;
     const push = (day) => {
       if (!day) return true;
       days.push(day);
-      return days.length < MAX_SERIES_OCCURRENCES;
+      return days.length < limit;
     };
-    const finite = rule.count !== null;
+    const cut = () => ({ days, truncated: !finite || rule.count > MAX_SERIES_OCCURRENCES });
     if (rule.freq === "WEEKLY" && rule.byDay.length) {
       const baseWeekday = weekdayOf(baseDay);
       const weekStart = addDays(baseDay, -((baseWeekday + 6) % 7));
@@ -2848,7 +2850,7 @@ ${GUEST_UI_LOOK_CSS}`;
             stop = true;
             break;
           }
-          if (!push(day)) return { days, truncated: true };
+          if (!push(day)) return cut();
         }
         if (stop) break;
       }
@@ -2862,7 +2864,7 @@ ${GUEST_UI_LOOK_CSS}`;
         const day = addDays(baseDay, cursor * step);
         if (day > windowEnd) break;
         if (day < baseDay) continue;
-        if (!push(day)) return { days, truncated: true };
+        if (!push(day)) return cut();
       }
       return { days, truncated: false };
     }
@@ -2878,28 +2880,27 @@ ${GUEST_UI_LOOK_CSS}`;
             const day2 = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(cursor.getUTCDate()).padStart(2, "0")}`;
             if (day2 < baseDay) continue;
             if (day2 > windowEnd) return { days, truncated: false };
-            if (!push(day2)) return { days, truncated: true };
+            if (!push(day2)) return cut();
           }
           continue;
         }
         if (rule.byDay.length) {
-          for (const entry of rule.byDay) {
-            const month = base.month + monthOffset;
-            const year = base.year + Math.floor((month - 1) / 12);
-            const normalizedMonth = (month - 1) % 12 + 1;
-            const targetDay = nthWeekdayOfMonth(year, normalizedMonth, entry.weekday, entry.ordinal ?? 1);
-            if (!targetDay) continue;
+          const month = base.month + monthOffset;
+          const year = base.year + Math.floor((month - 1) / 12);
+          const normalizedMonth = (month - 1) % 12 + 1;
+          const targetDays = rule.byDay.map((entry) => nthWeekdayOfMonth(year, normalizedMonth, entry.weekday, entry.ordinal ?? 1)).filter(Boolean).sort((x, y) => x - y);
+          for (const targetDay of targetDays) {
             const day2 = `${year}-${String(normalizedMonth).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
             if (day2 < baseDay) continue;
             if (day2 > windowEnd) return { days, truncated: false };
-            if (!push(day2)) return { days, truncated: true };
+            if (!push(day2)) return cut();
           }
           continue;
         }
         const day = monthAdd(baseDay, monthOffset);
         if (!day) continue;
         if (day > windowEnd) break;
-        if (!push(day)) return { days, truncated: true };
+        if (!push(day)) return cut();
       }
       return { days, truncated: false };
     }
@@ -2908,13 +2909,12 @@ ${GUEST_UI_LOOK_CSS}`;
     for (let index = startIndex; index < startIndex + 120; index++) {
       const year = base.year + index * rule.interval;
       if (rule.byDay.length) {
-        for (const entry of rule.byDay) {
-          const targetDay = nthWeekdayOfMonth(year, base.month, entry.weekday, entry.ordinal ?? 1);
-          if (!targetDay) continue;
+        const targetDays = rule.byDay.map((entry) => nthWeekdayOfMonth(year, base.month, entry.weekday, entry.ordinal ?? 1)).filter(Boolean).sort((x, y) => x - y);
+        for (const targetDay of targetDays) {
           const day2 = `${year}-${String(base.month).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
           if (day2 < baseDay) continue;
           if (day2 > windowEnd) return { days, truncated: false };
-          if (!push(day2)) return { days, truncated: true };
+          if (!push(day2)) return cut();
         }
         continue;
       }
@@ -2922,7 +2922,7 @@ ${GUEST_UI_LOOK_CSS}`;
       if (!day) continue;
       if (day < baseDay) continue;
       if (day > windowEnd) break;
-      if (!push(day)) return { days, truncated: true };
+      if (!push(day)) return cut();
     }
     return { days, truncated: false };
   }
@@ -2952,6 +2952,11 @@ ${GUEST_UI_LOOK_CSS}`;
       if (zone) timezones.set(zone.tzid, zone);
       index = cursor;
     }
+    // Eine Zeitangabe gilt in ihrer eigenen Zone (UTC oder TZID), sonst in der des Termins.
+    const zoneOf = (date, fallback) => date.utc ? { kind: "utc" } : date.tzid ? zoneFor(date.tzid, timezones, options.timeZone).zone : fallback;
+    // EXDATE und RECURRENCE-ID werden als Zeitpunkt verglichen, nicht als Wanduhrtext:
+    // Sie d\xFCrfen in UTC oder einer anderen Zone als DTSTART stehen.
+    const pointKey = (date, fallback) => date.dateOnly ? date.day : String(instantFor(zoneOf(date, fallback), date.day, date.time ?? "00:00").instant.getTime());
     const baseEvents = [];
     const overrides = /* @__PURE__ */ new Map();
     const warnings2 = [];
@@ -2970,7 +2975,8 @@ ${GUEST_UI_LOOK_CSS}`;
         if (item.name === "BEGIN") depth++;
         if (item.name === "END") depth--;
         if (depth === 0) break;
-        block.push(item);
+        // Nur Eigenschaften des VEVENT selbst; VALARM o. \xE4. haben eigene DESCRIPTION/SUMMARY.
+        if (depth === 1 && item.name !== "END") block.push(item);
       }
       index = cursor;
       const get = (name) => block.find((item) => item.name === name);
@@ -2986,7 +2992,8 @@ ${GUEST_UI_LOOK_CSS}`;
       const end = endProperty ? parseIcsDate(endProperty.value, endProperty.params) : null;
       const durationProperty = get("DURATION");
       const rruleProperty = get("RRULE");
-      const parsedRule = rruleProperty ? parseRRule(rruleProperty.value) : { rule: null, unsupported: null };
+      let parsedRule = rruleProperty ? parseRRule(rruleProperty.value) : { rule: null, unsupported: null };
+      if (parsedRule.rule && parsedRule.rule.byMonth !== null && parsedRule.rule.byMonth !== Number(start.day.slice(5, 7))) parsedRule = { rule: null, unsupported: "BYMONTH" };
       const zoneInfo = start.utc ? { zone: { kind: "utc" }, floating: false, unresolved: false } : zoneFor(start.tzid, timezones, options.timeZone);
       if (zoneInfo.floating && !start.dateOnly) floating++;
       if (zoneInfo.unresolved && !start.dateOnly) unresolvedZones++;
@@ -3005,9 +3012,10 @@ ${GUEST_UI_LOOK_CSS}`;
           const item = get("RECURRENCE-ID");
           return item ? parseIcsDate(item.value, item.params) : null;
         })(),
-        zone: zoneInfo.zone
+        zone: zoneInfo.zone,
+        endZone: end && !end.dateOnly ? zoneOf(end, zoneInfo.zone) : zoneInfo.zone
       };
-      if (raw.recurrenceId) overrides.set(`${uid}|${wallKey(raw.recurrenceId)}`, raw);
+      if (raw.recurrenceId) overrides.set(`${uid}|${pointKey(raw.recurrenceId, raw.zone)}`, raw);
       else baseEvents.push(raw);
     }
     const displayZone = options.timeZone;
@@ -3019,32 +3027,39 @@ ${GUEST_UI_LOOK_CSS}`;
     let series = 0;
     let truncated = 0;
     let unsupportedRules = 0;
+    const invalid = [];
     const addOccurrence = (raw, occurrence) => {
-      if (!overlapsWindow(occurrence, fromDay, toDayExclusive, displayZone)) return;
+      if (!overlapsWindow(occurrence, fromDay, toDayExclusive, displayZone)) return false;
       const event = makeEvent(raw, occurrence, displayZone);
-      if (seen.has(event.id)) return;
+      if (seen.has(event.id)) return true;
       seen.add(event.id);
-      if (events2.length >= MAX_IMPORT_EVENTS) return;
+      // Der Speicher nimmt nur g\xFCltige Termine an; ein einzelner darf nicht den ganzen Import verhindern.
+      if (!validateEvent(event)) {
+        invalid.push(event.title);
+        return false;
+      }
+      if (events2.length >= MAX_IMPORT_EVENTS) return false;
       events2.push(event);
+      return true;
     };
     for (const raw of baseEvents) {
       if (raw.rruleUnsupported) {
         unsupportedRules++;
-        const single = occurrenceFrom(raw.start, raw.end, raw.durationMs, raw.zone, displayZone);
-        if (single) addOccurrence(raw, single);
-        warnings2.push(`\u201E${raw.summary || raw.uid}\u201C: Serie nicht unterst\xFCtzt (${raw.rruleUnsupported}); nur das erste Vorkommen wurde \xFCbernommen.`);
+        const single = occurrenceFrom(raw.start, raw.end, raw.durationMs, raw.zone, displayZone, raw.endZone);
+        const added = single ? addOccurrence(raw, single) : false;
+        warnings2.push(`\u201E${raw.summary || raw.uid}\u201C: Serie nicht unterst\xFCtzt (${raw.rruleUnsupported}); ${added ? "nur das erste Vorkommen wurde \xFCbernommen." : "das erste Vorkommen liegt au\xDFerhalb des Importzeitraums, nichts wurde \xFCbernommen."}`);
         continue;
       }
-      const first = occurrenceFrom(raw.start, raw.end, raw.durationMs, raw.zone, displayZone);
+      const first = occurrenceFrom(raw.start, raw.end, raw.durationMs, raw.zone, displayZone, raw.endZone);
       if (!first) {
         skipped++;
         continue;
       }
       if (!raw.rrule) {
-        const key = `${raw.uid}|${occurrenceKey(first)}`;
+        const key = `${raw.uid}|${pointKey(raw.start, raw.zone)}`;
         const override = overrides.get(key);
         if (override) usedOverrides.add(key);
-        const occurrence = override ? occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone) : first;
+        const occurrence = override ? occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone, override.endZone) : first;
         if (occurrence) addOccurrence(override ?? raw, occurrence);
         continue;
       }
@@ -3052,7 +3067,9 @@ ${GUEST_UI_LOOK_CSS}`;
       const rule = raw.rrule;
       const baseDay = raw.start.day;
       const baseTime = raw.start.time ?? "00:00";
-      const generated = generateDays(rule, baseDay, fromDay, toDayExclusive);
+      // UNTIL begrenzt schon die Erzeugung, sonst erreicht eine beendete Serie f\xE4lschlich die Obergrenze.
+      const untilBound = rule.untilDay ?? (rule.untilWall ? rule.untilWall.slice(0, 10) : rule.untilInstant !== null ? addDays(dayKeyOf(new Date(rule.untilInstant), "UTC"), 1) : null);
+      const generated = generateDays(rule, baseDay, fromDay, untilBound && untilBound < toDayExclusive ? untilBound : toDayExclusive);
       if (generated.truncated) {
         truncated++;
         warnings2.push(`\u201E${raw.summary || raw.uid}\u201C: Serie wurde nach ${MAX_SERIES_OCCURRENCES} Vorkommen gek\xFCrzt.`);
@@ -3064,12 +3081,13 @@ ${GUEST_UI_LOOK_CSS}`;
         if (rule.untilDay && day > rule.untilDay) break;
         const wall = first.allDay ? day : `${day}T${baseTime}`;
         if (rule.untilWall && wall > rule.untilWall) break;
-        const key = `${raw.uid}|${wall}`;
+        const point = first.allDay ? day : pointKey({ ...raw.start, day, time: baseTime }, raw.zone);
+        const key = `${raw.uid}|${point}`;
         const override = overrides.get(key);
-        if (raw.exdates.some((exdate) => wallKey(exdate) === wall)) continue;
+        if (raw.exdates.some((exdate) => pointKey(exdate, raw.zone) === point)) continue;
         if (override) {
           usedOverrides.add(key);
-          const occurrence2 = occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone);
+          const occurrence2 = occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone, override.endZone);
           if (occurrence2) addOccurrence(override, occurrence2);
           continue;
         }
@@ -3091,7 +3109,8 @@ ${GUEST_UI_LOOK_CSS}`;
             raw.end ? { ...raw.end, day: addDays(day, daysBetween(raw.start.day, raw.end.day)) } : null,
             raw.durationMs,
             raw.zone,
-            displayZone
+            displayZone,
+            raw.endZone
           );
         }
         if (!occurrence) continue;
@@ -3104,10 +3123,11 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     for (const [key, override] of overrides) {
       if (usedOverrides.has(key)) continue;
-      const occurrence = occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone);
+      const occurrence = occurrenceFrom(override.start, override.end, override.durationMs, override.zone, displayZone, override.endZone);
       if (occurrence) addOccurrence(override, occurrence);
       warnings2.push(`Einzelvorkommen \u201E${override.summary || override.uid}\u201C ohne passende Serie wurde separat \xFCbernommen.`);
     }
+    if (invalid.length) warnings2.push(`${invalid.length} Termin(e) wurden \xFCbersprungen, weil sie nicht gespeichert werden k\xF6nnen (z. B. zeitgebundene Termine \xFCber sieben Tage): ${invalid.slice(0, 3).map((title) => `\u201E${title}\u201C`).join(", ")}.`);
     if (skipped) warnings2.push(`${skipped} VEVENT(s) ohne g\xFCltiges Startdatum wurden \xFCbersprungen.`);
     if (unresolvedZones) warnings2.push(`${unresolvedZones} Termin(e) nutzten eine unbekannte TZID; die Standardzeitzone wurde verwendet.`);
     if (floating) warnings2.push(`${floating} Termin(e) ohne Zeitzone wurden in ${options.timeZone} interpretiert.`);
@@ -3320,15 +3340,15 @@ ${GUEST_UI_LOOK_CSS}`;
     const windowMessage = hasDateReference(message) ? message : [...history].reverse().find((item) => item.role === "user" && hasDateReference(item.text))?.text ?? message;
     const window2 = contextWindow(windowMessage, context.today);
     const relevant = sortEvents(context.events.filter((event) => {
-      const range = eventDayRange(event);
+      const range = eventDayRange(event, context.timeZone);
       return range.start < window2.to && range.endExclusive > window2.from;
     })).slice(0, 120);
     const compact = relevant.map((event) => ({
       id: event.id,
       source: event.source,
       title: event.title,
-      day: event.allDay ? event.startDate : eventDayRange(event).start,
-      time: event.allDay ? "ganzt\xE4gig" : formatTimeRange(event),
+      day: event.allDay ? event.startDate : eventDayRange(event, context.timeZone).start,
+      time: event.allDay ? "ganzt\xE4gig" : formatTimeRange(event, context.timeZone),
       timeZone: event.timeZone,
       startsAt: event.startsAt,
       endDateExclusive: event.endDateExclusive,
@@ -3360,7 +3380,7 @@ ${GUEST_UI_LOOK_CSS}`;
     ].join("\n");
     return { system, prompt };
   }
-  function findMatches(intent, events2) {
+  function findMatches(intent, events2, zone) {
     const local = events2.filter((event) => event.source === "local");
     if (intent.eventId) return local.filter((event) => event.id === intent.eventId);
     if (!intent.matchTitle && !intent.matchDate) return [];
@@ -3368,7 +3388,7 @@ ${GUEST_UI_LOOK_CSS}`;
     let matches = local;
     if (needle) matches = matches.filter((event) => event.title.toLocaleLowerCase("de").includes(needle));
     if (intent.matchDate) matches = matches.filter((event) => {
-      const range = eventDayRange(event);
+      const range = eventDayRange(event, zone);
       return range.start <= intent.matchDate && intent.matchDate < range.endExclusive;
     });
     return sortEvents(matches);
@@ -3432,11 +3452,11 @@ ${GUEST_UI_LOOK_CSS}`;
       return { ok: false, question: error instanceof Error ? error.message : "Die Terminangaben sind unvollst\xE4ndig." };
     }
   }
-  function resolveUpdate(intent, events2) {
+  function resolveUpdate(intent, events2, zone) {
     if (intent.requiresClarification) return { kind: "clarify", question: intent.clarification ?? "Welcher Termin soll ge\xE4ndert werden?" };
     const referenced = intent.eventId ? events2.find((event) => event.id === intent.eventId) : void 0;
     if (referenced?.source === "posteo") return { kind: "clarify", question: "Posteo-Termine sind schreibgesch\xFCtzt und k\xF6nnen hier nicht ge\xE4ndert werden." };
-    const matches = findMatches(intent, events2);
+    const matches = findMatches(intent, events2, zone);
     if (!matches.length) return { kind: "clarify", question: "Ich habe keinen eindeutigen lokalen Termin gefunden. Bitte nenne Titel und Datum des Termins." };
     if (matches.length > 1) {
       const list = matches.slice(0, 5).map((event) => `\u201E${event.title}\u201C am ${formatEventRange(event)}`).join("; ");
@@ -3517,11 +3537,11 @@ ${GUEST_UI_LOOK_CSS}`;
       return { kind: "clarify", question: error instanceof Error ? error.message : "Die \xC4nderung ist unvollst\xE4ndig." };
     }
   }
-  function resolveDelete(intent, events2) {
+  function resolveDelete(intent, events2, zone) {
     if (intent.requiresClarification) return { kind: "clarify", question: intent.clarification ?? "Welcher Termin soll gel\xF6scht werden?" };
     const referenced = intent.eventId ? events2.find((event) => event.id === intent.eventId) : void 0;
     if (referenced?.source === "posteo") return { kind: "clarify", question: "Posteo-Termine sind schreibgesch\xFCtzt und k\xF6nnen hier nicht gel\xF6scht werden." };
-    const matches = findMatches(intent, events2);
+    const matches = findMatches(intent, events2, zone);
     if (!matches.length) return { kind: "clarify", question: "Ich habe keinen eindeutigen lokalen Termin gefunden. Bitte nenne Titel und Datum des Termins." };
     if (matches.length > 1) {
       const list = matches.slice(0, 5).map((event) => `\u201E${event.title}\u201C am ${formatEventRange(event)}`).join("; ");
@@ -3529,9 +3549,9 @@ ${GUEST_UI_LOOK_CSS}`;
     }
     return { kind: "ok", event: matches[0] };
   }
-  function listAnswer(events2, fromDay, toDay, today2, query) {
+  function listAnswer(events2, fromDay, toDay, today2, query, zone) {
     const range = events2.filter((event) => {
-      const span = eventDayRange(event);
+      const span = eventDayRange(event, zone);
       return span.start < addDays(toDay, 1) && span.endExclusive > fromDay && (!query || matchesQuery(event, query));
     });
     const sorted = sortEvents(range);
@@ -3544,14 +3564,14 @@ ${GUEST_UI_LOOK_CSS}`;
     const lines = [];
     let currentDay = "";
     for (const event of sorted) {
-      const rangeOfEvent = eventDayRange(event);
+      const rangeOfEvent = eventDayRange(event, zone);
       const day = rangeOfEvent.start < fromDay ? fromDay : rangeOfEvent.start;
       if (day !== currentDay) {
         currentDay = day;
-        const count = eventsOnDay(sorted, day).length;
+        const count = eventsOnDay(sorted, day, zone).length;
         lines.push(`${relativeDayLabel(day, today2)} (${count}):`);
       }
-      lines.push(`- ${event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event)} \xB7 ${event.title}${event.source === "posteo" ? " (Posteo, nur lesen)" : ""}${event.location ? ` \xB7 ${event.location}` : ""}`);
+      lines.push(`- ${event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event, zone)} \xB7 ${event.title}${event.source === "posteo" ? " (Posteo, nur lesen)" : ""}${event.location ? ` \xB7 ${event.location}` : ""}`);
     }
     return { text: lines.join("\n"), events: sorted };
   }
@@ -3661,7 +3681,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     return `${event.title} \xB7 ${formatEventRange(event)}${event.source === "posteo" ? " \xB7 Posteo, nur lesen" : ""}`;
   }
   function eventChip(event, compact = false) {
-    const text = event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event);
+    const text = event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event, settings.timeZone);
     return `<button type="button" class="event-chip event-chip--${event.source}${compact ? " event-chip--compact" : ""}${event.allDay ? " event-chip--allday" : ""}" style="${toneStyle(event)}" data-action="open-event" data-id="${escapeHtml(event.id)}" title="${escapeHtml(eventAria(event))}" aria-label="${escapeHtml(eventAria(event))}">
     <span class="event-chip__dot" aria-hidden="true"></span><span class="event-chip__time">${escapeHtml(text)}</span><span class="event-chip__title">${escapeHtml(event.title)}</span>
   </button>`;
@@ -3729,7 +3749,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     const endDay = dayKeyOf(new Date(end.getTime() - 1), zone);
     if (day < startDay || day > endDay) return null;
     const startMin = day === startDay ? minutesInZone(start, zone) : 0;
-    const endMin = day === endDay ? minutesInZone(end, zone) : 24 * 60;
+    const endMin = day === endDay ? minutesInZone(new Date(end.getTime() - 1), zone) + 1 : 24 * 60;
     if (endMin <= startMin) return null;
     return { event, startMin, endMin };
   }
@@ -3814,7 +3834,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     const sections = [];
     for (let offset = 0; offset < days; offset++) {
       const day = addDays(fromDay, offset);
-      const dayEvents = eventsOnDay(filtered, day);
+      const dayEvents = eventsOnDay(filtered, day, settings.timeZone);
       if (!dayEvents.length) continue;
       sections.push(`<section class="agenda-day"><header><span class="agenda-day__date">${dayNumber(day)}</span><div><h3>${escapeHtml(relativeDayLabel(day, today()))}</h3><span>${escapeHtml(formatDayLong(day))} \xB7 ${escapeHtml(daySummary(day, dayEvents))}</span></div></header>
       <div class="agenda-events">${dayEvents.map((event) => {
@@ -3829,7 +3849,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
   function miniAgenda() {
     const start = today();
     const days = 8;
-    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: start, toDayExclusive: addDays(start, days) });
+    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: start, toDayExclusive: addDays(start, days), zone: settings.timeZone });
     const upcoming = sortEvents(filtered);
     if (!upcoming.length) {
       return `<div class="mini-empty"><p><strong>${search ? "Kein Treffer." : "Noch keine Termine."}</strong></p><p>${search ? "Suche anpassen oder Termin anlegen." : "Heute ist noch frei. Lege einen Termin an oder frage die KI."}</p></div>`;
@@ -3837,9 +3857,9 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     const sections = [];
     for (let offset = 0; offset < days; offset++) {
       const day = addDays(start, offset);
-      const list = upcoming.filter((event) => eventsOnDay([event], day).length);
+      const list = upcoming.filter((event) => eventsOnDay([event], day, settings.timeZone).length);
       if (!list.length) continue;
-      sections.push(`<section class="mini-day"><h3>${escapeHtml(relativeDayLabel(day, start))}<span>${escapeHtml(formatWeekday(day))}</span></h3>${list.map((event) => `<div class="mini-row"><span class="mini-row__time">${escapeHtml(event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event))}</span>${eventChip(event, true)}</div>`).join("")}</section>`);
+      sections.push(`<section class="mini-day"><h3>${escapeHtml(relativeDayLabel(day, start))}<span>${escapeHtml(formatWeekday(day))}</span></h3>${list.map((event) => `<div class="mini-row"><span class="mini-row__time">${escapeHtml(event.allDay ? "Ganzt\xE4gig" : formatTimeRange(event, settings.timeZone))}</span>${eventChip(event, true)}</div>`).join("")}</section>`);
     }
     return sections.join("");
   }
@@ -3847,11 +3867,11 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     const grid = monthGrid(monthKey);
     const from = grid[0];
     const toExclusive = addDays(grid[grid.length - 1], 1);
-    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: toExclusive });
+    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: toExclusive, zone: settings.timeZone });
     const weekdays = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
     const limit = 3;
     const cells = grid.map((day) => {
-      const dayEvents = eventsOnDay(filtered, day);
+      const dayEvents = eventsOnDay(filtered, day, settings.timeZone);
       const outside = monthOfDay(day) !== monthKey;
       const classes = ["day-cell"];
       if (outside) classes.push("day-cell--outside");
@@ -3867,7 +3887,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
       <div class="day-cell__events"><div class="day-cell__chips">${chips}</div>${more}</div>
     </div>`;
     }).join("");
-    const selected = eventsOnDay(filterEvents(visibleEvents(), { query: search }), selectedDay);
+    const selected = eventsOnDay(filterEvents(visibleEvents(), { query: search }), selectedDay, settings.timeZone);
     const rows = selected.length ? `<div class="day-detail__list">${selected.map((event) => {
       const meta = `${sourceBadge(event)}${event.location ? `<span class="detail-row__location">${escapeHtml(event.location)}</span>` : ""}${event.description ? `<span class="detail-row__description">${escapeHtml(event.description)}</span>` : ""}`;
       return `<article class="detail-row" data-source="${event.source}" style="${toneStyle(event)}">${eventChip(event)}${meta ? `<div class="detail-row__meta">${meta}</div>` : ""}</article>`;
@@ -3884,7 +3904,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
   function agendaView() {
     const from = selectedDay;
     const to = addDays(from, 60);
-    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: to });
+    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: to, zone: settings.timeZone });
     return `<div class="agenda-view">
       <div class="agenda-head"><p class="eyebrow">N\xE4chste 60 Tage</p><p>Ab ${escapeHtml(relativeDayLabel(from, today()))} \xB7 ${escapeHtml(formatDayLong(from))}</p></div>
       <div class="agenda-list">${groupedAgenda(from, 60, filtered)}</div>
@@ -3895,7 +3915,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     const zone = settings.timeZone;
     const from = days[0];
     const toExclusive = addDays(days[days.length - 1], 1);
-    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: toExclusive });
+    const filtered = filterEvents(visibleEvents(), { query: search, fromDay: from, toDayExclusive: toExclusive, zone });
     const todayDay = today();
     const now = nowMinutes();
     const bandLimit = isDay ? 8 : 3;
@@ -3945,7 +3965,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
       const nowLine = day === todayDay ? `<div class="now-line" style="top:${(now / (24 * 60) * 100).toFixed(3)}%" aria-hidden="true"><span class="now-line__dot"></span><span class="now-line__label">${clockFromMinutes(now)}</span></div>` : "";
       return `<div class="${classes.join(" ")}" data-action="add-slot" data-day="${day}" aria-label="${escapeHtml(`Freie Fl\xE4che am ${formatDayLong(day)}: Termin anlegen`)}">${cards}${nowLine}</div>`;
     }).join("");
-    const summary = isDay ? `<div class="time-summary"><span class="time-summary__count">${escapeHtml(daySummary(days[0], eventsOnDay(filtered, days[0])))}</span><span class="time-summary__hint">Klick in eine freie Fl\xE4che legt einen Termin an.</span></div>` : "";
+    const summary = isDay ? `<div class="time-summary"><span class="time-summary__count">${escapeHtml(daySummary(days[0], eventsOnDay(filtered, days[0], zone)))}</span><span class="time-summary__hint">Klick in eine freie Fl\xE4che legt einen Termin an.</span></div>` : "";
     return `<section class="time-view" data-days="${days.length}" style="--days:${days.length}" aria-label="${isDay ? "Tagesansicht" : "Wochenansicht"}">
       ${summary}
       <div class="time-scroll" data-time-scroll tabindex="0" aria-label="Zeitraster">
@@ -4012,7 +4032,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     <label class="check"><input type="checkbox" name="allDay"${form.allDay ? " checked" : ""}><span>Ganzt\xE4gig</span></label>
     <div class="field-row">
       <label class="field"><span>${form.allDay ? "Tag" : "Datum"}</span><input type="date" name="date" value="${form.date}"></label>
-      ${form.allDay ? `<label class="field"><span>Bis einschlie\xDFlich (optional)</span><input type="date" name="endDate" value="${form.endDate}"></label>` : `<label class="field"><span>Start</span><input type="time" name="startTime" value="${form.startTime}"></label><label class="field"><span>Ende</span><input type="time" name="endTime" value="${form.endTime}"></label>`}
+      ${form.allDay ? `<label class="field"><span>Bis einschlie\xDFlich (optional)</span><input type="date" name="endDate" value="${form.endDate}"></label>` : `<label class="field"><span>Start</span><input type="time" name="startTime" value="${form.startTime}"></label><label class="field"><span>Ende</span><input type="time" name="endTime" value="${form.endTime}"></label><label class="field"><span>Endet am</span><input type="date" name="endDate" value="${form.endDate}"></label>`}
     </div>
     <label class="field"><span>Ort (optional)</span><input name="location" maxlength="300" value="${escapeHtml(form.location)}" placeholder="Praxis, B\xFCro \u2026"></label>
     <label class="field"><span>Beschreibung (optional)</span><textarea name="description" rows="3" maxlength="4000">${escapeHtml(form.description)}</textarea></label>
@@ -4205,7 +4225,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
           return;
         }
         const range = clampRange(intent.fromDate ?? today(), intent.toDate ?? addDays(today(), 7));
-        const answer = listAnswer(visibleEvents(), range.from, range.to, today(), intent.query);
+        const answer = listAnswer(visibleEvents(), range.from, range.to, today(), intent.query, settings.timeZone);
         addChat("assistant", answer.text);
         return;
       }
@@ -4243,7 +4263,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
         return;
       }
       case "update": {
-        const resolution = resolveUpdate(intent, visibleEvents());
+        const resolution = resolveUpdate(intent, visibleEvents(), settings.timeZone);
         if (resolution.kind === "clarify") {
           addChat("assistant", resolution.question);
           return;
@@ -4254,7 +4274,7 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
         return;
       }
       case "delete": {
-        const resolution = resolveDelete(intent, visibleEvents());
+        const resolution = resolveDelete(intent, visibleEvents(), settings.timeZone);
         if (resolution.kind === "clarify") {
           addChat("assistant", resolution.question);
           return;
@@ -4302,6 +4322,16 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
   async function confirmAiDraft() {
     const preview = aiDraft;
     if (!preview || aiSaveBusy || aiBusy) return;
+    if (preview.kind !== "create") {
+      const current = events.find((event) => event.id === preview.event.id);
+      const expected = preview.kind === "update" ? preview.before : preview.event;
+      if (!current || current.updatedAt !== expected.updatedAt) {
+        aiDraft = null;
+        addChat("assistant", "Der Termin wurde inzwischen ge\xE4ndert oder gel\xF6scht. Der Vorschlag wurde verworfen; es wurde nichts gespeichert.");
+        render();
+        return;
+      }
+    }
     aiSaveBusy = true;
     saveState = "saving";
     try {
@@ -4373,6 +4403,9 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
       endDate: form.endDate,
       startTime: form.startTime,
       endTime: form.endTime,
+      // Ein abweichendes Enddatum gilt ausdrücklich (mehrtägige Termine); am selben Tag
+      // rollt ein Ende vor dem Start wie bisher auf den Folgetag.
+      timedEndDate: !form.allDay && form.endDate && form.endDate !== form.date ? form.endDate : void 0,
       // Beim Bearbeiten die Zone des Termins behalten, auch wenn die
       // Anzeige-Zeitzone in den Einstellungen inzwischen gewechselt wurde.
       timeZone: form.existing?.timeZone ?? settings.timeZone
@@ -4800,7 +4833,17 @@ Ganzt\xE4gig: ${allDay.map((event) => event.title).join(", ")}` : ""}`
     if (field2.name === "title") form.title = field2.value;
     if (field2.name === "description") form.description = field2.value;
     if (field2.name === "location") form.location = field2.value;
-    if (field2.name === "date") form.date = field2.value;
+    if (field2.name === "date") {
+      // Verschieben des Startdatums verschiebt das Enddatum mit; die Dauer in Tagen bleibt.
+      const previous = form.date;
+      form.date = field2.value;
+      if (isDayKey(form.date)) {
+        const span = isDayKey(previous) && isDayKey(form.endDate) ? Math.max(0, daysBetween(previous, form.endDate)) : 0;
+        form.endDate = addDays(form.date, span);
+        const endField = app.querySelector('[name="endDate"]');
+        if (endField) endField.value = form.endDate;
+      }
+    }
     if (field2.name === "endDate") form.endDate = field2.value;
     if (field2.name === "startTime") form.startTime = field2.value;
     if (field2.name === "endTime") form.endTime = field2.value;
