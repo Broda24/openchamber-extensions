@@ -51,6 +51,13 @@ function randomId(): string {
 
 export function createBoardStorage(storage: HostClient['storage']): BoardStorage {
   let queue: Promise<unknown> = Promise.resolve();
+  // Other views (panel and page) save independently, and the host offers no
+  // compare-and-swap. Unknown snapshot chunks may belong to another view's save
+  // that is still in flight, so only provably dead snapshots are ever deleted:
+  // ones that were the committed index once (nobody commits them again) and
+  // this view's own failed saves.
+  const committed = new Set<string>();
+  const abandoned = new Set<string>();
   function serial<T>(operation: () => Promise<T>): Promise<T> {
     const pending = queue.then(operation);
     queue = pending.catch(() => undefined);
@@ -79,15 +86,22 @@ export function createBoardStorage(storage: HostClient['storage']): BoardStorage
 
   async function current(): Promise<SnapshotIndex | null> {
     const value = await storage.get(INDEX_KEY);
-    return value === undefined ? null : parseIndex(value);
+    if (value === undefined) return null;
+    const index = parseIndex(value);
+    committed.add(index.snapshotId);
+    return index;
   }
 
-  async function cleanup(keep: SnapshotIndex | null): Promise<void> {
+  /** Deletes known-dead snapshots; `live` must be the index read after they were recorded. */
+  async function cleanup(live: SnapshotIndex | null): Promise<void> {
+    const dead = new Set([...committed, ...abandoned].filter((id) => id !== live?.snapshotId));
+    if (!dead.size) return;
     const keys = await storage.keys();
     for (const key of keys) {
       const match = SNAPSHOT_KEY.exec(key);
-      if (match && match[1] !== keep?.snapshotId) await storage.delete(key);
+      if (match && dead.has(match[1])) await storage.delete(key);
     }
+    for (const id of dead) { committed.delete(id); abandoned.delete(id); }
   }
 
   return {
@@ -120,6 +134,7 @@ export function createBoardStorage(storage: HostClient['storage']): BoardStorage
         let snapshotId: string;
         do { snapshotId = randomId(); } while (snapshotId === previous?.snapshotId || [...existingKeys].some((key) => key.startsWith(`${SNAPSHOT_PREFIX}${snapshotId}-`)));
         const index: SnapshotIndex = { version: 2, snapshotId, chunks: Math.ceil(bytes.length / RAW_CHUNK_BYTES), bytes: bytes.length, checksum: checksum(bytes) };
+        abandoned.add(snapshotId);
         for (let i = 0; i < index.chunks; i++) {
           const chunk = toBase64(bytes.subarray(i * RAW_CHUNK_BYTES, (i + 1) * RAW_CHUNK_BYTES));
           if (bytesOf(chunk) > MAX_CHUNK_BYTES) throw new Error('Speicherteil überschreitet die sichere Größe.');
@@ -127,9 +142,12 @@ export function createBoardStorage(storage: HostClient['storage']): BoardStorage
         }
         // This is the only commit point. All prior failures leave the old pointer intact.
         await storage.set(INDEX_KEY, index as unknown as JsonValue);
+        abandoned.delete(snapshotId);
+        committed.add(snapshotId);
         // Post-commit housekeeping is best effort: a committed save must not report failure.
+        // Re-reading the index also catches a concurrent save that superseded this one.
         // Failed cleanup is retried before the next save, before consuming snapshot space.
-        try { await cleanup(index); await storage.delete(STORAGE_KEY); } catch { /* keep committed data */ }
+        try { await cleanup(await current()); await storage.delete(STORAGE_KEY); } catch { /* keep committed data */ }
       });
     },
   };

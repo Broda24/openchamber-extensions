@@ -136,15 +136,42 @@ test('post-commit cleanup failure does not report a committed save as failed and
   assert.ok([...m.data.keys()].filter((key) => key.startsWith(SNAPSHOT_PREFIX)).every((key) => key.includes(liveId)));
 });
 
-test('orphan cleanup only removes own recognized snapshot keys, preserving unrelated keys and legacy until commit', async () => {
-  const orphan = `${SNAPSHOT_PREFIX}${'a'.repeat(32)}-0`;
+test('orphan cleanup only removes own dead snapshots, preserving foreign chunks, unrelated keys and legacy until commit', async () => {
+  // Uncommitted chunks of unknown origin may be another view's save in flight.
+  const foreign = `${SNAPSHOT_PREFIX}${'a'.repeat(32)}-0`;
   const unknown = `${SNAPSHOT_PREFIX}not-our-format`;
-  const m = memory({ [STORAGE_KEY]: legacy, [orphan]: 'abandoned', [unknown]: 'keep', unrelated: { keep: true } });
+  const m = memory({ [STORAGE_KEY]: legacy, [foreign]: 'in flight', [unknown]: 'keep', unrelated: { keep: true } });
   const s = createBoardStorage(m.storage);
   m.setFailure((op, key) => op === 'set' && key === INDEX_KEY);
   await assert.rejects(s.save(board()));
-  assert.equal(m.data.has(orphan), false); assert.equal(m.data.get(unknown), 'keep');
+  const failedKeys = [...m.data.keys()].filter((key) => key.startsWith(SNAPSHOT_PREFIX) && key !== foreign && key !== unknown);
+  assert.ok(failedKeys.length > 0);
+  assert.equal(m.data.get(foreign), 'in flight'); assert.equal(m.data.get(unknown), 'keep');
   assert.deepEqual(m.data.get('unrelated'), { keep: true }); assert.deepEqual(m.data.get(STORAGE_KEY), legacy);
+  m.setFailure(() => false); await s.save(board());
+  assert.ok(failedKeys.every((key) => !m.data.has(key)), 'own failed snapshot is removed on the next save');
+  assert.equal(m.data.get(foreign), 'in flight');
+});
+
+test('concurrent saves from two views never leave the index pointing at missing chunks', async () => {
+  let seed = 7;
+  const random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const delayed = (storage) => Object.fromEntries(Object.entries(storage).map(([name, operation]) => [name,
+    async (...args) => { await new Promise((resolve) => setTimeout(resolve, Math.floor(random() * 5))); return operation(...args); }]));
+  for (let run = 0; run < 40; run++) {
+    const m = memory(); await createBoardStorage(m.storage).save(board('Base'));
+    const a = createBoardStorage(delayed(m.storage)); const b = createBoardStorage(delayed(m.storage));
+    await Promise.all([a.load(), b.load()]);
+    for (let round = 0; round < 3; round++) {
+      await Promise.all([a.save(board(`A${round}`)), b.save(board(`B${round}`))]);
+      const loaded = await createBoardStorage(m.storage).load();
+      assert.ok([`A${round}`, `B${round}`].includes(loaded.cards[0].notes), `run ${run}: last writer wins`);
+    }
+    // Superseded snapshots do not accumulate: at most the live one plus one lost race remain.
+    const live = m.data.get(INDEX_KEY).snapshotId;
+    const ids = new Set([...m.data.keys()].filter((key) => key.startsWith(SNAPSHOT_PREFIX)).map((key) => key.slice(SNAPSHOT_PREFIX.length, -2)));
+    assert.ok(ids.has(live) && ids.size <= 2, `run ${run}: ${ids.size} snapshots kept`);
+  }
 });
 
 test('queued saves are serialized and capture the submitted value immediately; queue recovers after errors', async () => {
@@ -165,7 +192,8 @@ test('invalid and oversized save inputs are rejected without touching storage', 
 
 test('cleanup failure before the next commit preserves the current snapshot and does not begin new chunks', async () => {
   const m = memory(); const s = createBoardStorage(m.storage); await s.save(board('Original'));
-  m.data.set(`${SNAPSHOT_PREFIX}${'b'.repeat(32)}-0`, 'orphan'); m.calls.length = 0;
+  m.setFailure((op, key) => op === 'set' && key === INDEX_KEY);
+  await assert.rejects(s.save(board('Lost')), /injected/); m.calls.length = 0;
   m.setFailure((op) => op === 'delete');
   await assert.rejects(s.save(board('New')), /injected/);
   assert.equal(m.calls.some(([op]) => op === 'set'), false);
