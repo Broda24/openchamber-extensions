@@ -7,7 +7,7 @@ Sammlung meiner Erweiterungen für OpenChamber. Jede Erweiterung liegt eigenstä
 | Erweiterung | Beschreibung | Dokumentation | Aktuelle Pakete |
 | --- | --- | --- | --- |
 | **Ideenboard** (`ideenboard`) | Persönliches Kanban-Board für Ideen und aktuelle Arbeit | [README](extensions/ideenboard/README.md) | [GitHub-Releases](https://github.com/Broda24/openchamber-extensions/releases) |
-| **OpenCalendar** (`open-calendar`) | Lokaler Kalender mit KI-Eingabefeld und lesendem ICS-Import | [README](extensions/open-calendar/README.md) | Noch kein Release; ZIP mit `npm run package --workspace open-calendar` bauen |
+| **OpenCalendar** (`open-calendar`) | Lokaler Kalender mit KI-Eingabefeld und lesendem ICS-Import | [README](extensions/open-calendar/README.md) | [Release 0.2.2 herunterladen](https://github.com/Broda24/openchamber-extensions/releases/download/open-calendar-v0.2.2/open-calendar-0.2.2.zip) |
 
 Neue Erweiterungen werden als Geschwisterverzeichnisse ergänzt, zum Beispiel `extensions/meine-erweiterung/`. Die vorhandenen Unterordner sind voneinander unabhängig und teilen keine Nutzerdaten.
 

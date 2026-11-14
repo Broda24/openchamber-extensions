@@ -6,7 +6,7 @@ Die Erweiterung läuft vollständig im Panel. Es gibt keinen Server, keine Daten
 
 ## Installation
 
-1. `open-calendar-0.2.2.zip` (gebaut mit `npm run package`, siehe unten) in OpenChamber unter **Einstellungen → Erweiterungen** als Update installieren/ersetzen. Nicht vorher deinstallieren: Eine Deinstallation löscht den Erweiterungsspeicher. Vorher ein Backup exportieren.
+1. [open-calendar-0.2.2.zip herunterladen](https://github.com/Broda24/openchamber-extensions/releases/download/open-calendar-v0.2.2/open-calendar-0.2.2.zip) und in OpenChamber unter **Einstellungen → Erweiterungen** als Update installieren/ersetzen. Nicht vorher deinstallieren: Eine Deinstallation löscht den Erweiterungsspeicher. Vorher ein Backup exportieren.
 2. Die Berechtigungsabfrage bestätigen. Verlangt wird ausschließlich **Modellzugriff** (`model`) für das KI-Eingabefeld.
 3. OpenCalendar als Panel in der Seitenleiste oder als Vollbildseite öffnen.
 
